@@ -1,0 +1,35 @@
+---
+# Печатает VLESS-ссылки для всех пользователей.
+# Использование:
+#   ansible-playbook gen-links.yml --ask-vault-pass
+#   make links
+#
+# Ссылку открывать в: v2rayN / NekoBox / v2rayNG / Shadowrocket
+
+- name: Generate VLESS client links
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - group_vars/vps/vars.yml
+    - group_vars/vps/vault.yml
+
+  tasks:
+    - name: Print VLESS link for each client
+      ansible.builtin.debug:
+        msg: >-
+          vless://{{ item.uuid }}@{{ vps_host }}:{{ xray_port
+          }}?encryption=none&flow=xtls-rprx-vision&security=reality&sni={{ xray_sni
+          }}&fp={{ xray_fingerprint }}&pbk={{ xray_public_key }}&sid={{ item.short_id
+          }}&type=tcp&headerType=none#{{ item.name }}
+      loop: "{{ xray_clients }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Print subscription URLs (рекомендуется вместо разовых ссылок)
+      ansible.builtin.debug:
+        msg: "{{ item.name }} -> http://{{ vps_host }}:{{ sub_port }}/sub/{{ item.short_id }}"
+      loop: "{{ xray_clients }}"
+      loop_control:
+        label: "{{ item.name }}"

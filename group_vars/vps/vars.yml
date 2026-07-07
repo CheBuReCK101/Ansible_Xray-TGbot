@@ -1,0 +1,58 @@
+---
+# ── Общее ────────────────────────────────────────────────────────────────────
+# IP или домен VPS — используется в клиентских ссылках (make links)
+vps_host: "rknlox01.isgood.host"
+
+# Timezone сервера. Список: timedatectl list-timezones
+server_timezone: "Europe/Amsterdam"
+
+# Swap-файл (важно для 1 GB RAM)
+swap_size_mb: 512
+
+# ── Xray ─────────────────────────────────────────────────────────────────────
+# "latest" — всегда ставить последнюю версию с GitHub Releases
+# Конкретная версия: например "24.9.30" (без "v")
+xray_version: "latest"
+
+# Порт, на котором слушает xray (443 — маскировка под HTTPS)
+xray_port: 443
+
+# Сайт-маскировка для Reality. Должен поддерживать TLSv1.3 + H2.
+# ВАЖНО: писать без "www." и без "https://" — просто голый домен.
+# Популярные домены (microsoft.com и т.п.) чаще профилируются DPI/РКН —
+# рабочий вариант на практике: yahoo.com
+xray_sni: "yahoo.com"
+
+# TLS fingerprint клиента для Reality. На практике "chrome" не заработал
+# (handshake рвался сразу после TCP-коннекта), "firefox" — стабильно работает
+# и на компе (v2rayN), и на iPhone (V2Box).
+xray_fingerprint: "firefox"
+
+# gRPC Stats API — только localhost, снаружи недоступен
+xray_api_port: 10085
+
+# Порт для HTTP-эндпоинта подписки (раздаёт vless:// в base64 по /sub/<short_id>)
+sub_port: 8080
+
+# На каком интерфейсе слушать subscription-сервер:
+#   "127.0.0.1" — только локально (доступ через SSH-туннель с Raspberry Pi,
+#                 порт НЕ открыт наружу с самого VPS — рекомендуется)
+#   "0.0.0.0"   — публично с самого VPS (проще, но порт торчит наружу как есть)
+sub_bind: "127.0.0.1"
+
+# Публичный SSH-ключ Raspberry Pi для туннеля к subscription-порту.
+# Сгенерировать на Pi:  ssh-keygen -t ed25519 -f ~/.ssh/vps_tunnel -N ""
+# Сюда вставить содержимое ~/.ssh/vps_tunnel.pub (одна строка, начинается с "ssh-ed25519").
+# Пока пусто — пользователь pitunnel создаётся, но доступа по ключу ни у кого нет.
+pi_tunnel_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2J+iWTUw6sV8rnXV7HugdfAA0VaFLyn8A0n3KxznUH chebureck@pi5"
+
+# ── Telegram-бот ─────────────────────────────────────────────────────────────
+tgbot_user: tgbot
+tgbot_dir: /opt/tgbot
+
+# Как часто собирать дельта-трафик из xray и писать в SQLite (секунды)
+tgbot_collect_interval: 60
+
+# ── node_exporter (пока не используется, для Pi-мониторинга) ─────────────────
+node_exporter_version: "1.8.2"
+node_exporter_port: 9100

@@ -1,0 +1,40 @@
+---
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  ПРИМЕР — не шифрован, показывает структуру vault.yml                  ║
+# ║                                                                          ║
+# ║  Как использовать:                                                       ║
+# ║    cp group_vars/vps/vault.yml.example group_vars/vps/vault.yml         ║
+# ║    vi group_vars/vps/vault.yml       # заполнить реальные значения       ║
+# ║    ansible-vault encrypt group_vars/vps/vault.yml                       ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ── Xray Reality keypair ──────────────────────────────────────────────────
+# Генерация: ./scripts/gen-keys.sh  (требует Docker)
+# или вручную:  docker run --rm ghcr.io/xtls/xray-core:latest xray x25519
+xray_private_key: "СГЕНЕРИРОВАТЬ"
+xray_public_key:  "СГЕНЕРИРОВАТЬ"
+
+# ── Пользователи VPN ─────────────────────────────────────────────────────
+# Один блок = один человек (один UUID на все устройства пользователя).
+#
+# uuid:     python3 -c "import uuid; print(uuid.uuid4())"
+# short_id: openssl rand -hex 4   (ровно 8 hex-символов)
+xray_clients:
+  - name:     "cheburek"
+    uuid:     "00000000-0000-0000-0000-000000000001"
+    short_id: "a1b2c3d4"
+  - name:     "vasya"
+    uuid:     "00000000-0000-0000-0000-000000000002"
+    short_id: "e5f6a7b8"
+  - name:     "petya"
+    uuid:     "00000000-0000-0000-0000-000000000003"
+    short_id: "c9d0e1f2"
+
+# ── Telegram-бот ─────────────────────────────────────────────────────────
+# Токен бота: создать у @BotFather → /newbot
+tgbot_token: "0000000000:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# Telegram ID администраторов (у кого бот будет отвечать на команды).
+# Узнать свой ID: написать @userinfobot
+tgbot_admin_ids:
+  - 123456789

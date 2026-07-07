@@ -1,0 +1,18 @@
+# Vault password — НИКОГДА не пушить
+.vault_pass
+
+# Ansible
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

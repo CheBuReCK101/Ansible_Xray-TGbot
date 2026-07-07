@@ -1,0 +1,9 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart tgbot
+  ansible.builtin.systemd:
+    name: tgbot
+    state: restarted

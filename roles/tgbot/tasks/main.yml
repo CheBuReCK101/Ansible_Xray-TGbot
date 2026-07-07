@@ -1,0 +1,113 @@
+---
+- name: Create tgbot system user
+  ansible.builtin.user:
+    name: "{{ tgbot_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ tgbot_dir }}"
+    create_home: false
+    groups: xray
+    append: true
+
+- name: Allow tgbot to restart xray without password (scoped sudo rule)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/tgbot-xray
+    mode: "0440"
+    content: |
+      {{ tgbot_user }} ALL=(root) NOPASSWD: /bin/systemctl restart xray
+    validate: "visudo -cf %s"
+
+- name: Create restricted SSH user for Pi tunnel
+  ansible.builtin.user:
+    name: pitunnel
+    system: true
+    shell: /bin/sh
+    create_home: true
+    home: /home/pitunnel
+
+- name: Create .ssh directory for pitunnel
+  ansible.builtin.file:
+    path: /home/pitunnel/.ssh
+    state: directory
+    owner: pitunnel
+    group: pitunnel
+    mode: "0700"
+  when: pi_tunnel_public_key | default("") | length > 0
+
+- name: Deploy restricted authorized_keys for pitunnel
+  ansible.builtin.copy:
+    dest: /home/pitunnel/.ssh/authorized_keys
+    owner: pitunnel
+    group: pitunnel
+    mode: "0600"
+    content: "no-pty,no-agent-forwarding,no-X11-forwarding,permitopen=\"127.0.0.1:{{ sub_port }}\",command=\"echo 'tunnel-only, no shell'\" {{ pi_tunnel_public_key }}\n"
+  when: pi_tunnel_public_key | default("") | length > 0
+
+- name: UFW allow subscription HTTP port (только если слушаем публично)
+  community.general.ufw:
+    rule: allow
+    port: "{{ sub_port | string }}"
+    proto: tcp
+    comment: "tgbot subscription endpoint"
+  when: sub_bind == "0.0.0.0"
+
+- name: Create tgbot directory
+  ansible.builtin.file:
+    path: "{{ tgbot_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Create Python virtualenv
+  ansible.builtin.command: python3 -m venv {{ tgbot_dir }}/venv
+  args:
+    creates: "{{ tgbot_dir }}/venv/bin/python"
+
+- name: Copy requirements.txt
+  ansible.builtin.copy:
+    src: requirements.txt
+    dest: "{{ tgbot_dir }}/requirements.txt"
+    mode: "0644"
+
+- name: Install Python dependencies
+  ansible.builtin.pip:
+    requirements: "{{ tgbot_dir }}/requirements.txt"
+    virtualenv: "{{ tgbot_dir }}/venv"
+    state: present
+  notify: restart tgbot
+
+- name: Deploy bot.py
+  ansible.builtin.copy:
+    src: bot.py
+    dest: "{{ tgbot_dir }}/bot.py"
+    mode: "0640"
+  notify: restart tgbot
+
+- name: Deploy .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ tgbot_dir }}/.env"
+    mode: "0600"
+  notify: restart tgbot
+
+- name: Set ownership of tgbot directory
+  ansible.builtin.file:
+    path: "{{ tgbot_dir }}"
+    owner: "{{ tgbot_user }}"
+    group: "{{ tgbot_user }}"
+    recurse: true
+
+- name: Deploy tgbot systemd service
+  ansible.builtin.template:
+    src: tgbot.service.j2
+    dest: /etc/systemd/system/tgbot.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart tgbot
+
+- name: Enable and start tgbot
+  ansible.builtin.systemd:
+    name: tgbot
+    enabled: true
+    state: started
+    daemon_reload: true

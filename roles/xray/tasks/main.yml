@@ -1,0 +1,130 @@
+---
+- name: Create xray system user
+  ansible.builtin.user:
+    name: xray
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create xray directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: xray
+    group: xray
+    recurse: true
+  loop:
+    - /etc/xray
+    - /var/log/xray
+    - /usr/local/share/xray
+
+- name: Get latest xray release tag from GitHub
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/XTLS/Xray-core/releases/latest
+    return_content: true
+    headers:
+      Accept: "application/vnd.github.v3+json"
+  register: _xray_latest
+  when: xray_version == "latest"
+
+- name: Set xray tag (latest)
+  ansible.builtin.set_fact:
+    _xray_tag: "{{ _xray_latest.json.tag_name }}"
+  when: xray_version == "latest"
+
+- name: Set xray tag (pinned)
+  ansible.builtin.set_fact:
+    _xray_tag: "v{{ xray_version }}"
+  when: xray_version != "latest"
+
+- name: Check installed xray version
+  ansible.builtin.command: /usr/local/bin/xray version
+  register: _xray_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install / upgrade xray
+  when: >-
+    _xray_installed.rc != 0 or
+    (_xray_tag | replace('v','')) not in _xray_installed.stdout
+  block:
+    - name: Create temp dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: xray
+      register: _tmp
+
+    - name: Download Xray-linux-64.zip
+      ansible.builtin.get_url:
+        url: "https://github.com/XTLS/Xray-core/releases/download/{{ _xray_tag }}/Xray-linux-64.zip"
+        dest: "{{ _tmp.path }}/xray.zip"
+        mode: "0644"
+
+    - name: Unzip xray
+      ansible.builtin.unarchive:
+        src: "{{ _tmp.path }}/xray.zip"
+        dest: "{{ _tmp.path }}"
+        remote_src: true
+
+    - name: Install xray binary
+      ansible.builtin.copy:
+        src: "{{ _tmp.path }}/xray"
+        dest: /usr/local/bin/xray
+        mode: "0755"
+        remote_src: true
+      notify: restart xray
+
+    - name: Install geo data files
+      ansible.builtin.copy:
+        src: "{{ _tmp.path }}/{{ item }}"
+        dest: "/usr/local/share/xray/{{ item }}"
+        mode: "0644"
+        remote_src: true
+      loop: [geoip.dat, geosite.dat]
+      failed_when: false
+
+    - name: Remove temp dir
+      ansible.builtin.file:
+        path: "{{ _tmp.path }}"
+        state: absent
+
+- name: Deploy xray config.json
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: /etc/xray/config.json
+    owner: xray
+    group: xray
+    mode: "0660"
+    validate: /usr/local/bin/xray run -test -config %s
+  notify: restart xray
+
+- name: Configure logrotate for xray
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/xray
+    mode: "0644"
+    content: |
+      /var/log/xray/*.log {
+          daily
+          rotate 7
+          compress
+          delaycompress
+          missingok
+          notifempty
+      }
+
+- name: Deploy xray systemd service
+  ansible.builtin.template:
+    src: xray.service.j2
+    dest: /etc/systemd/system/xray.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart xray
+
+- name: Enable and start xray
+  ansible.builtin.systemd:
+    name: xray
+    enabled: true
+    state: started
+    daemon_reload: true

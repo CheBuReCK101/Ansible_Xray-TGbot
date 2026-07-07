@@ -1,0 +1,89 @@
+{
+  "log": {
+    "access":   "/var/log/xray/access.log",
+    "error":    "/var/log/xray/error.log",
+    "loglevel": "warning"
+  },
+  "stats": {},
+  "api": {
+    "tag":      "api",
+    "services": ["StatsService"]
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink":   true,
+        "statsUserDownlink": true
+      }
+    },
+    "system": {
+      "statsInboundUplink":   false,
+      "statsInboundDownlink": false
+    }
+  },
+  "inbounds": [
+    {
+      "tag":      "vless-reality",
+      "listen":   "0.0.0.0",
+      "port":     {{ xray_port }},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+{% for client in xray_clients %}
+          {
+            "id":    "{{ client.uuid }}",
+            "email": "{{ client.name }}",
+            "flow":  "xtls-rprx-vision",
+            "level": 0
+          }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network":  "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show":        false,
+          "dest":        "{{ xray_sni }}:443",
+          "xver":        0,
+          "serverNames": ["{{ xray_sni }}"],
+          "privateKey":  "{{ xray_private_key }}",
+          "shortIds": [
+{% for client in xray_clients %}
+            "{{ client.short_id }}"{% if not loop.last %},{% endif %}
+
+{% endfor %}
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled":      true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly":    true
+      }
+    },
+    {
+      "tag":      "api",
+      "listen":   "127.0.0.1",
+      "port":     {{ xray_api_port }},
+      "protocol": "dokodemo-door",
+      "settings": { "address": "127.0.0.1" }
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom",  "settings": {} },
+    { "tag": "block",  "protocol": "blackhole", "settings": {} }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type":        "field",
+        "inboundTag":  ["api"],
+        "outboundTag": "api"
+      }
+    ]
+  }
+}

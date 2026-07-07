@@ -1,0 +1,78 @@
+---
+- name: Create node_exporter user
+  ansible.builtin.user:
+    name: node_exporter
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Check installed node_exporter version
+  ansible.builtin.command: /usr/local/bin/node_exporter --version
+  register: _ne_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install node_exporter
+  when: >-
+    _ne_installed.rc != 0 or
+    node_exporter_version not in (_ne_installed.stdout + _ne_installed.stderr)
+  block:
+    - name: Create temp dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: ne
+      register: _tmp
+
+    - name: Download node_exporter tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version
+          }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        dest: "{{ _tmp.path }}/node_exporter.tar.gz"
+        mode: "0644"
+
+    - name: Extract tarball
+      ansible.builtin.unarchive:
+        src: "{{ _tmp.path }}/node_exporter.tar.gz"
+        dest: "{{ _tmp.path }}"
+        remote_src: true
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "{{ _tmp.path }}/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        mode: "0755"
+        remote_src: true
+      notify: restart node_exporter
+
+    - name: Remove temp dir
+      ansible.builtin.file:
+        path: "{{ _tmp.path }}"
+        state: absent
+
+# Раскомментировать после настройки Pi-мониторинга.
+# Заменить YOUR_PI_IP на реальный IP малинки в локальной сети.
+#
+# - name: UFW allow node_exporter from Pi
+#   community.general.ufw:
+#     rule: allow
+#     port: "{{ node_exporter_port | string }}"
+#     proto: tcp
+#     src: "YOUR_PI_IP"
+#     comment: node_exporter for Pi Prometheus
+
+- name: Deploy node_exporter systemd service
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart node_exporter
+
+- name: Enable and start node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,5 @@
+---
+xray_version:  "latest"
+xray_port:     443
+xray_sni:      "www.microsoft.com"
+xray_api_port: 10085

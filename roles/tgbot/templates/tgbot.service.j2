@@ -1,0 +1,18 @@
+[Unit]
+Description=VPN Telegram Bot
+After=network.target xray.service
+Wants=xray.service
+
+[Service]
+Type=simple
+User={{ tgbot_user }}
+WorkingDirectory={{ tgbot_dir }}
+EnvironmentFile={{ tgbot_dir }}/.env
+ExecStart={{ tgbot_dir }}/venv/bin/python {{ tgbot_dir }}/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
