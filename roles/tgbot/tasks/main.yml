@@ -14,42 +14,9 @@
     dest: /etc/sudoers.d/tgbot-xray
     mode: "0440"
     content: |
+      Defaults:{{ tgbot_user }} !requiretty
       {{ tgbot_user }} ALL=(root) NOPASSWD: /bin/systemctl restart xray
     validate: "visudo -cf %s"
-
-- name: Create restricted SSH user for Pi tunnel
-  ansible.builtin.user:
-    name: pitunnel
-    system: true
-    shell: /bin/sh
-    create_home: true
-    home: /home/pitunnel
-
-- name: Create .ssh directory for pitunnel
-  ansible.builtin.file:
-    path: /home/pitunnel/.ssh
-    state: directory
-    owner: pitunnel
-    group: pitunnel
-    mode: "0700"
-  when: pi_tunnel_public_key | default("") | length > 0
-
-- name: Deploy restricted authorized_keys for pitunnel
-  ansible.builtin.copy:
-    dest: /home/pitunnel/.ssh/authorized_keys
-    owner: pitunnel
-    group: pitunnel
-    mode: "0600"
-    content: "no-pty,no-agent-forwarding,no-X11-forwarding,permitopen=\"127.0.0.1:{{ sub_port }}\",command=\"echo 'tunnel-only, no shell'\" {{ pi_tunnel_public_key }}\n"
-  when: pi_tunnel_public_key | default("") | length > 0
-
-- name: UFW allow subscription HTTP port (только если слушаем публично)
-  community.general.ufw:
-    rule: allow
-    port: "{{ sub_port | string }}"
-    proto: tcp
-    comment: "tgbot subscription endpoint"
-  when: sub_bind == "0.0.0.0"
 
 - name: Create tgbot directory
   ansible.builtin.file:

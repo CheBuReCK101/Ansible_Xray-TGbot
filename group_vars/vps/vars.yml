@@ -20,31 +20,15 @@ xray_port: 443
 # Сайт-маскировка для Reality. Должен поддерживать TLSv1.3 + H2.
 # ВАЖНО: писать без "www." и без "https://" — просто голый домен.
 # Популярные домены (microsoft.com и т.п.) чаще профилируются DPI/РКН —
-# рабочий вариант на практике: yahoo.com
+# рабочий и проверенный вариант: yahoo.com
 xray_sni: "yahoo.com"
 
-# TLS fingerprint клиента для Reality. На практике "chrome" не заработал
-# (handshake рвался сразу после TCP-коннекта), "firefox" — стабильно работает
-# и на компе (v2rayN), и на iPhone (V2Box).
+# TLS fingerprint клиента для Reality. "chrome" не заработал (handshake рвался
+# сразу после TCP-коннекта), "firefox" — стабильно работает на всех платформах.
 xray_fingerprint: "firefox"
 
 # gRPC Stats API — только localhost, снаружи недоступен
 xray_api_port: 10085
-
-# Порт для HTTP-эндпоинта подписки (раздаёт vless:// в base64 по /sub/<short_id>)
-sub_port: 8080
-
-# На каком интерфейсе слушать subscription-сервер:
-#   "127.0.0.1" — только локально (доступ через SSH-туннель с Raspberry Pi,
-#                 порт НЕ открыт наружу с самого VPS — рекомендуется)
-#   "0.0.0.0"   — публично с самого VPS (проще, но порт торчит наружу как есть)
-sub_bind: "127.0.0.1"
-
-# Публичный SSH-ключ Raspberry Pi для туннеля к subscription-порту.
-# Сгенерировать на Pi:  ssh-keygen -t ed25519 -f ~/.ssh/vps_tunnel -N ""
-# Сюда вставить содержимое ~/.ssh/vps_tunnel.pub (одна строка, начинается с "ssh-ed25519").
-# Пока пусто — пользователь pitunnel создаётся, но доступа по ключу ни у кого нет.
-pi_tunnel_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN2J+iWTUw6sV8rnXV7HugdfAA0VaFLyn8A0n3KxznUH chebureck@pi5"
 
 # ── Telegram-бот ─────────────────────────────────────────────────────────────
 tgbot_user: tgbot

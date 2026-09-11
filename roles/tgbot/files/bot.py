@@ -5,7 +5,6 @@
 #    агрегирует по периодам, отвечает на команды.
 # 2) Управляет пользователями VPN: /adduser, /kickuser — правит живой
 #    /etc/xray/config.json и перезапускает xray, без полного Ansible-редеплоя.
-# 3) Отдаёт subscription-ссылки по HTTP: GET /sub/<short_id> -> base64(vless://...)
 #
 # Источник правды о пользователях, добавленных через бота — JSON-файл
 # clients_meta.json рядом с ботом. При первом запуске он строится из
@@ -13,13 +12,14 @@
 # именно в таком порядке их генерит Ansible-шаблон).
 
 import asyncio
-import base64
 import json
 import logging
 import os
 import secrets
+import sqlite3
 import subprocess
 import uuid as uuid_lib
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,7 +27,6 @@ import psutil
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject, Filter
 from aiogram.types import BotCommand, Message
-from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -48,13 +47,10 @@ XRAY_SNI         = os.environ["XRAY_SNI"]
 XRAY_FINGERPRINT = os.environ.get("XRAY_FINGERPRINT", "firefox")
 XRAY_PORT        = os.environ.get("XRAY_PORT", "443")
 VPS_HOST         = os.environ["VPS_HOST"]
-SUB_PORT         = int(os.environ.get("SUB_PORT", "8080"))
-SUB_BIND         = os.environ.get("SUB_BIND", "127.0.0.1")
-SUB_PUBLIC_URL   = os.environ.get("SUB_PUBLIC_URL", f"http://{os.environ['VPS_HOST']}:{SUB_PORT}")
 DB_PATH          = Path(os.environ.get("DB_PATH",      "/opt/tgbot/stats.db"))
 COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "60"))
 
-TGBOT_DIR    = Path(os.environ.get("DB_PATH", "/opt/tgbot/stats.db")).parent
+TGBOT_DIR    = DB_PATH.parent
 META_PATH    = TGBOT_DIR / "clients_meta.json"
 PENDING_PATH = TGBOT_DIR / "pending_users.txt"
 
@@ -69,9 +65,6 @@ class IsAdmin(Filter):
 
 
 # ── Database (трафик) ──────────────────────────────────────────────────────────
-import sqlite3
-from contextlib import closing
-
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -232,8 +225,6 @@ def _apply_meta_to_config(meta: dict) -> None:
         data["short_id"] for data in meta.values()
     ]
 
-    # Пишем напрямую (без tempfile+rename — у tgbot нет права на запись
-    # в саму директорию /etc/xray, только в сам файл через группу xray).
     XRAY_CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
     result = subprocess.run(
@@ -315,7 +306,7 @@ async def cmd_help(msg: Message) -> None:
         "*Управление пользователями*\n"
         "/adduser <имя> — добавить пользователя\n"
         "/kickuser <имя> — удалить пользователя\n"
-        "/listusers — список + subscription-ссылки\n",
+        "/listusers — список пользователей и их ссылки\n",
         parse_mode="Markdown",
     )
 
@@ -402,11 +393,9 @@ async def cmd_adduser(msg: Message, command: CommandObject) -> None:
         return
 
     link = build_vless_link(name, data)
-    sub_url = f"{SUB_PUBLIC_URL}/sub/{data['short_id']}"
     await msg.answer(
         f"✅ Пользователь `{name}` добавлен, xray перезапущен.\n\n"
         f"*Ссылка:*\n`{link}`\n\n"
-        f"*Subscription URL:*\n`{sub_url}`\n\n"
         f"⚠️ Чтобы пользователь не пропал при следующем `make deploy`, "
         f"добавь этот блок в `vault.yml` (он уже сохранён на сервере в "
         f"`{PENDING_PATH}`):\n"
@@ -448,42 +437,9 @@ async def cmd_listusers(msg: Message) -> None:
         return
     lines = ["👥 *Пользователи VPN*\n"]
     for name, data in meta.items():
-        link    = build_vless_link(name, data)
-        sub_url = f"{SUB_PUBLIC_URL}/sub/{data['short_id']}"
-        lines.append(
-            f"👤 `{name}`\n"
-            f"vless:\n`{link}`\n"
-            f"sub:\n`{sub_url}`"
-        )
+        link = build_vless_link(name, data)
+        lines.append(f"👤 `{name}`\n`{link}`")
     await msg.answer("\n\n".join(lines), parse_mode="Markdown")
-
-
-# ── HTTP: subscription endpoint ────────────────────────────────────────────────
-async def handle_sub(request: web.Request) -> web.Response:
-    short_id = request.match_info["short_id"]
-    meta = _load_meta()
-
-    match = next(
-        ((name, data) for name, data in meta.items() if data["short_id"] == short_id),
-        None,
-    )
-    if match is None:
-        return web.Response(status=404, text="not found")
-
-    name, data = match
-    link = build_vless_link(name, data)
-    encoded = base64.b64encode(link.encode()).decode()
-    return web.Response(text=encoded, content_type="text/plain")
-
-
-async def run_web_app() -> None:
-    app = web.Application()
-    app.router.add_get("/sub/{short_id}", handle_sub)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, SUB_BIND, SUB_PORT)
-    await site.start()
-    log.info("Subscription HTTP server listening on %s:%d", SUB_BIND, SUB_PORT)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -496,8 +452,6 @@ async def main() -> None:
     scheduler.start()
     log.info("Collector started (interval=%ds)", COLLECT_INTERVAL)
 
-    await run_web_app()
-
     await bot.set_my_commands([
         BotCommand(command="help",        description="Список команд"),
         BotCommand(command="stats",       description="Трафик за 1 минуту"),
@@ -508,7 +462,7 @@ async def main() -> None:
         BotCommand(command="status",      description="Нагрузка сервера"),
         BotCommand(command="adduser",     description="Добавить пользователя VPN"),
         BotCommand(command="kickuser",    description="Удалить пользователя VPN"),
-        BotCommand(command="listusers",   description="Список пользователей + subscription"),
+        BotCommand(command="listusers",   description="Список пользователей и их ссылки"),
     ])
 
     log.info("Bot polling started")
