@@ -1,10 +1,10 @@
 ---
 # ── Общее ────────────────────────────────────────────────────────────────────
 # IP или домен VPS — используется в клиентских ссылках (make links)
-vps_host: "rknlox01.isgood.host"
+###vps_host: "151.243.191.95"
 
 # Timezone сервера. Список: timedatectl list-timezones
-server_timezone: "Europe/Amsterdam"
+server_timezone: "Europe/Zurich"
 
 # Swap-файл (важно для 1 GB RAM)
 swap_size_mb: 512

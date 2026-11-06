@@ -23,11 +23,16 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import ipaddress
+import socket
+import urllib.request
+
 import psutil
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject, Filter
 from aiogram.types import BotCommand, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 # ── Config ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -46,7 +51,8 @@ XRAY_PUBLIC_KEY  = os.environ["XRAY_PUBLIC_KEY"]
 XRAY_SNI         = os.environ["XRAY_SNI"]
 XRAY_FINGERPRINT = os.environ.get("XRAY_FINGERPRINT", "firefox")
 XRAY_PORT        = os.environ.get("XRAY_PORT", "443")
-VPS_HOST         = os.environ["VPS_HOST"]
+# Необязательно: домен или IP вручную. Если задан, автоопределение не используется.
+VPS_HOST_OVERRIDE = os.environ.get("VPS_HOST", "").strip()
 DB_PATH          = Path(os.environ.get("DB_PATH",      "/opt/tgbot/stats.db"))
 COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "60"))
 
@@ -281,10 +287,52 @@ def kick_user(name: str) -> None:
 def list_users() -> dict:
     return _load_meta()
 
+IP_LOOKUP_URLS = (
+    "https://api.ipify.org",
+    "https://ipv4.icanhazip.com",
+    "https://ifconfig.me/ip",
+)
+_public_ip = {"value": ""}
+
+
+def _detect_public_ip() -> str:
+    """Публичный IPv4: сначала внешний сервис, затем адрес с интерфейса."""
+    for url in IP_LOOKUP_URLS:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as r:
+                ip = r.read().decode().strip()
+            socket.inet_pton(socket.AF_INET, ip)  # только валидный IPv4
+            return ip
+        except Exception:
+            continue
+    # запасной вариант (UDP connect пакетов не шлёт)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        if not ipaddress.ip_address(ip).is_private:
+            return ip
+    except Exception:
+        pass
+    return ""
+
+
+def refresh_public_ip() -> None:
+    ip = _detect_public_ip()
+    if not ip:
+        log.warning("Не удалось определить публичный IP, оставляю: %r", _public_ip["value"])
+        return
+    if ip != _public_ip["value"]:
+        log.info("Публичный IP: %s -> %s", _public_ip["value"] or "-", ip)
+        _public_ip["value"] = ip
+
+
+def get_host() -> str:
+    return VPS_HOST_OVERRIDE or _public_ip["value"] or "IP_НЕ_ОПРЕДЕЛЁН"
 
 def build_vless_link(name: str, data: dict) -> str:
     return (
-        f"vless://{data['uuid']}@{VPS_HOST}:{XRAY_PORT}"
+        f"vless://{data['uuid']}@{get_host()}:{XRAY_PORT}"
         f"?encryption=none&flow=xtls-rprx-vision&security=reality"
         f"&sni={XRAY_SNI}&fp={XRAY_FINGERPRINT}&pbk={XRAY_PUBLIC_KEY}"
         f"&sid={data['short_id']}&type=tcp&headerType=none#{name}"
@@ -301,7 +349,6 @@ async def cmd_help(msg: Message) -> None:
         "/stats\\_hour — за час\n"
         "/stats\\_day — за сутки\n"
         "/stats\\_month — за 30 дней\n"
-        "/users — живые счётчики xray\n"
         "/status — нагрузка сервера\n\n"
         "*Управление пользователями*\n"
         "/adduser <имя> — добавить пользователя\n"
@@ -335,22 +382,6 @@ async def cmd_stats_month(msg: Message) -> None:
     await msg.answer(fmt_table(rows, "30 дней"), parse_mode="Markdown")
 
 
-@dp.message(Command("users"), IsAdmin())
-async def cmd_users(msg: Message) -> None:
-    stats = xray_query(reset=False)
-    if not stats:
-        await msg.answer("⚠️ Нет данных от xray — сервис запущен?")
-        return
-    lines = ["👥 *Счётчики xray (с момента старта)*\n"]
-    for user, t in sorted(stats.items()):
-        total = t["uplink"] + t["downlink"]
-        lines.append(
-            f"👤 `{user}`   │   📦 {human(total)}\n"
-            f"   ↑ {human(t['uplink'])}   ↓ {human(t['downlink'])}"
-        )
-    await msg.answer("\n".join(lines), parse_mode="Markdown")
-
-
 @dp.message(Command("status"), IsAdmin())
 async def cmd_status(msg: Message) -> None:
     loop = asyncio.get_event_loop()
@@ -365,13 +396,17 @@ async def cmd_status(msg: Message) -> None:
     hours  = uptime.seconds // 3600
     mins   = (uptime.seconds % 3600) // 60
 
+    rows_30d   = query_traffic(datetime.utcnow() - timedelta(days=30))
+    total_30d  = sum(r["total"] for r in rows_30d)
+
     await msg.answer(
         "🖥 *Состояние сервера*\n\n"
         f"⏱ Uptime: `{days}д {hours}ч {mins}м`\n"
         f"🔥 CPU:   `{cpu:.1f}%`\n"
         f"🧠 RAM:   `{mem.used // 2**20}/{mem.total // 2**20} MB` ({mem.percent:.0f}%)\n"
         f"💾 Disk:  `{disk.used / 2**30:.1f}/{disk.total / 2**30:.1f} GB` ({disk.percent:.0f}%)\n"
-        f"🌐 Net    ↑ `{human(net.bytes_sent)}`   ↓ `{human(net.bytes_recv)}`",
+        f"🌐 Net    ↑ `{human(net.bytes_sent)}`   ↓ `{human(net.bytes_recv)}`\n"
+        f"📦 VPN-трафик за 30 дней: `{human(total_30d)}`",
         parse_mode="Markdown",
     )
 
@@ -393,15 +428,16 @@ async def cmd_adduser(msg: Message, command: CommandObject) -> None:
         return
 
     link = build_vless_link(name, data)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📋 Скопировать ссылку", copy_text=CopyTextButton(text=link))
+    ]])
     await msg.answer(
         f"✅ Пользователь `{name}` добавлен, xray перезапущен.\n\n"
-        f"*Ссылка:*\n`{link}`\n\n"
-        f"⚠️ Чтобы пользователь не пропал при следующем `make deploy`, "
-        f"добавь этот блок в `vault.yml` (он уже сохранён на сервере в "
-        f"`{PENDING_PATH}`):\n"
+        f"⚠️ Не забудь добавить блок в vault.yml (заметка в `{PENDING_PATH}`):\n"
         f"```\n  - name:     \"{name}\"\n    uuid:     \"{data['uuid']}\"\n"
         f"    short_id: \"{data['short_id']}\"\n```",
         parse_mode="Markdown",
+        reply_markup=kb,
     )
 
 
@@ -435,11 +471,15 @@ async def cmd_listusers(msg: Message) -> None:
     if not meta:
         await msg.answer("📭 Пользователей нет.")
         return
-    lines = ["👥 *Пользователи VPN*\n"]
     for name, data in meta.items():
         link = build_vless_link(name, data)
-        lines.append(f"👤 `{name}`\n`{link}`")
-    await msg.answer("\n\n".join(lines), parse_mode="Markdown")
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="📋 Скопировать ссылку",
+                copy_text=CopyTextButton(text=link),
+            )
+        ]])
+        await msg.answer(f"👤 `{name}`", parse_mode="Markdown", reply_markup=kb)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -452,13 +492,15 @@ async def main() -> None:
     scheduler.start()
     log.info("Collector started (interval=%ds)", COLLECT_INTERVAL)
 
+    refresh_public_ip()
+    scheduler.add_job(refresh_public_ip, "interval", minutes=5)
+
     await bot.set_my_commands([
         BotCommand(command="help",        description="Список команд"),
         BotCommand(command="stats",       description="Трафик за 1 минуту"),
         BotCommand(command="stats_hour",  description="Трафик за час"),
         BotCommand(command="stats_day",   description="Трафик за сутки"),
         BotCommand(command="stats_month", description="Трафик за 30 дней"),
-        BotCommand(command="users",       description="Живые счётчики xray"),
         BotCommand(command="status",      description="Нагрузка сервера"),
         BotCommand(command="adduser",     description="Добавить пользователя VPN"),
         BotCommand(command="kickuser",    description="Удалить пользователя VPN"),
